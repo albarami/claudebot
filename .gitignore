@@ -1,0 +1,23 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# Output
+output/
+uploads/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
