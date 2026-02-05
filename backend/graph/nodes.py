@@ -148,10 +148,16 @@ async def generate_deliverables_node(state: SurveyAnalysisState) -> Dict[str, An
         f.write(f"**Date:** {timestamp}\n")
         f.write(f"**Auditor:** Claude Opus 4.5 (Survey Auditor Agent)\n\n")
         f.write("## QUALITY SCORES\n\n")
-        for k, v in state.get('quality_scores', {}).items():
-            status = "✓" if v >= 95 else "⚠" if v >= 90 else "❌"
-            f.write(f"- **{k.replace('_', ' ').title()}:** {v:.1f}% {status}\n")
-        f.write(f"\n**OVERALL SCORE:** {state.get('overall_score', 0):.1f}%\n")
+        quality_scores = state.get('quality_scores') or {}
+        if quality_scores:
+            for k, v in quality_scores.items():
+                score = float(v) if v is not None else 0.0
+                status = "✓" if score >= 95 else "⚠" if score >= 90 else "❌"
+                f.write(f"- **{k.replace('_', ' ').title()}:** {score:.1f}% {status}\n")
+        else:
+            f.write("- Quality scores not yet available\n")
+        overall = float(state.get('overall_score') or 0)
+        f.write(f"\n**OVERALL SCORE:** {overall:.1f}%\n")
         f.write(f"\n## CERTIFICATION: {state.get('certification', 'PENDING')}\n\n")
         f.write("---\n\n")
         f.write(state.get('audit_result', ''))

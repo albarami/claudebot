@@ -56,6 +56,9 @@ class StatusResponse(BaseModel):
     overall_score: Optional[float]
     logs: list
     errors: list
+    verification_status: Optional[str] = None
+    formula_coverage: Optional[float] = None
+    output_type: Optional[str] = None
 
 
 @app.on_event("startup")
@@ -125,7 +128,8 @@ async def upload_file(file: UploadFile = File(...)):
         "state": None,
         "certification": None,
         "overall_score": None,
-        "output_path": None
+        "output_path": None,
+        "research_questions": []  # Will be populated by analyze endpoint
     }
     
     return {
@@ -159,6 +163,10 @@ async def run_analysis(session_id: str):
             session_id=session_id,
             file_path=session["file_path"]
         )
+        
+        # Pass research_questions to state
+        if session.get("research_questions"):
+            initial_state["research_questions"] = session["research_questions"]
         
         config = {"configurable": {"thread_id": session_id}}
         
@@ -246,6 +254,10 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
     if session["status"] not in ["uploaded", "error"]:
         raise HTTPException(status_code=400, detail="Analysis already running or completed")
     
+    # Store research_questions in session for state initialization
+    if request.research_questions:
+        session["research_questions"] = request.research_questions
+    
     background_tasks.add_task(run_analysis, request.session_id)
     
     return {
@@ -298,13 +310,13 @@ async def get_logs(session_id: str):
 @app.get("/api/download/{session_id}")
 async def download_results(session_id: str):
     """
-    Download analysis results.
+    Download analysis results (audit certificate).
     
     Args:
         session_id: Session identifier
     
     Returns:
-        ZIP file with all deliverables
+        Markdown file with audit certificate
     """
     session = sessions.get(session_id)
     if not session:
@@ -332,6 +344,80 @@ async def download_results(session_id: str):
         )
     
     raise HTTPException(status_code=404, detail="No output files found")
+
+
+@app.get("/api/download-excel/{session_id}")
+async def download_excel(session_id: str):
+    """
+    Download Excel workbook with analysis results.
+    Returns .xlsm (macro-enabled) if available, otherwise .xlsx.
+    
+    Args:
+        session_id: Session identifier
+    
+    Returns:
+        Excel workbook file
+    """
+    session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if session["status"] not in ["completed", "running"]:
+        raise HTTPException(status_code=400, detail="Analysis not started or failed")
+    
+    xlsm_files = list(OUTPUT_DIR.glob(f"PhD_EDA_{session_id}*.xlsm"))
+    if xlsm_files:
+        return FileResponse(
+            str(xlsm_files[0]),
+            media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
+            filename=xlsm_files[0].name,
+            headers={"X-Output-Type": "macro-enabled"}
+        )
+    
+    xlsx_files = list(OUTPUT_DIR.glob(f"PhD_EDA_{session_id}*.xlsx"))
+    if xlsx_files:
+        return FileResponse(
+            str(xlsx_files[0]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=xlsx_files[0].name,
+            headers={"X-Output-Type": "standard"}
+        )
+    
+    raise HTTPException(status_code=404, detail="Excel workbook not found")
+
+
+@app.get("/api/verification/{session_id}")
+async def get_verification_status(session_id: str):
+    """
+    Get verification status for the analysis.
+    
+    Args:
+        session_id: Session identifier
+    
+    Returns:
+        Verification metrics and status
+    """
+    session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    xlsx_files = list(OUTPUT_DIR.glob(f"PhD_EDA_{session_id}*.xlsx"))
+    xlsm_files = list(OUTPUT_DIR.glob(f"PhD_EDA_{session_id}*.xlsm"))
+    
+    workbook_exists = bool(xlsx_files or xlsm_files)
+    output_type = "macro-enabled" if xlsm_files else ("standard" if xlsx_files else "none")
+    
+    return {
+        "session_id": session_id,
+        "workbook_exists": workbook_exists,
+        "output_type": output_type,
+        "verification_status": session.get("verification_status", "pending"),
+        "formula_coverage": session.get("formula_coverage"),
+        "qc_approvals": sum(1 for log in session.get("logs", []) 
+                          if "APPROVE" in log.get("message", "")),
+        "qc_rejections": sum(1 for log in session.get("logs", []) 
+                           if "REJECT" in log.get("message", ""))
+    }
 
 
 if __name__ == "__main__":

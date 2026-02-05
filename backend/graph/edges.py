@@ -39,9 +39,10 @@ def route_after_qc(state: SurveyAnalysisState) -> Literal["advance_task", "imple
     return "advance_task"
 
 
-def route_after_audit(state: SurveyAnalysisState) -> Literal["deliverables", "implementer"]:
+def route_after_audit(state: SurveyAnalysisState) -> Literal["deliverables", "revision_loop", "halt"]:
     """
     Route after audit based on certification level.
+    Can trigger revisions for quality issues.
     
     Args:
         state: Current workflow state
@@ -51,11 +52,26 @@ def route_after_audit(state: SurveyAnalysisState) -> Literal["deliverables", "im
     """
     certification = state.get('certification', '')
     overall_score = state.get('overall_score', 0)
+    audit_revision_count = state.get('audit_revision_count', 0)
+    MAX_AUDIT_REVISIONS = 2
     
-    if certification in ["PUBLICATION-READY", "THESIS-READY"] or overall_score >= 95:
+    # High quality - proceed to deliverables
+    if certification in ["PUBLICATION-READY", "THESIS-READY"] or overall_score >= 90:
         return "deliverables"
     
-    return "deliverables"
+    # Acceptable quality - proceed with warnings
+    if certification == "ACCEPTABLE" or overall_score >= 75:
+        return "deliverables"
+    
+    # Low quality - trigger revision if under max
+    if audit_revision_count < MAX_AUDIT_REVISIONS:
+        return "revision_loop"
+    
+    # Max revisions reached - halt or proceed with current quality
+    if overall_score >= 60:
+        return "deliverables"
+    
+    return "halt"
 
 
 def should_continue_tasks(state: SurveyAnalysisState) -> Literal["implementer", "auditor"]:
