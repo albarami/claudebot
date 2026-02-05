@@ -1,188 +1,197 @@
 """
 Unit tests for the Deterministic Formula Engine.
-Tests formula generation for various statistical tasks.
+Tests the production engines/formula_engine.py module.
 """
 
 import pytest
-from tools.formula_engine import (
-    FormulaEngine,
-    FormulaType,
-    ColumnMapping,
-    FormulaResult,
-    create_formula_engine
-)
+import tempfile
+from pathlib import Path
+
+import pandas as pd
+from openpyxl import Workbook
+
+from engines.formula_engine import FormulaEngine
+from models.task_schema import TaskType, TaskSpec
 
 
-class TestColumnMapping:
-    """Tests for ColumnMapping dataclass."""
-    
-    def test_column_mapping_data_range(self):
-        """Test data_range property generates correct Excel reference."""
-        mapping = ColumnMapping(
-            name="Age",
-            letter="B",
-            index=2,
-            data_start_row=2,
-            data_end_row=101
-        )
+@pytest.fixture
+def sample_df():
+    """Create sample DataFrame for testing."""
+    return pd.DataFrame({
+        "ID": range(1, 101),
+        "Age": [25 + i % 40 for i in range(100)],
+        "Score": [50 + i % 50 for i in range(100)],
+        "Group": ["A" if i % 2 == 0 else "B" for i in range(100)],
+        "Rating": [3.5 + (i % 5) * 0.5 for i in range(100)]
+    })
+
+
+@pytest.fixture
+def temp_workbook(sample_df):
+    """Create a temporary workbook with raw data."""
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "00_RAW_DATA_LOCKED"
         
-        assert mapping.data_range == "'00_RAW_DATA_LOCKED'!B2:B101"
-    
-    def test_column_mapping_absolute_range(self):
-        """Test absolute_range property generates correct Excel reference."""
-        mapping = ColumnMapping(
-            name="Score",
-            letter="C",
-            index=3,
-            data_start_row=2,
-            data_end_row=50
-        )
+        for col_idx, col_name in enumerate(sample_df.columns, 1):
+            ws.cell(row=1, column=col_idx, value=col_name)
         
-        assert mapping.absolute_range == "'00_RAW_DATA_LOCKED'!$C$2:$C$50"
+        for row_idx, row in enumerate(sample_df.itertuples(index=False), 2):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        
+        wb.save(f.name)
+        yield Path(f.name)
 
 
 class TestFormulaEngine:
-    """Tests for FormulaEngine class."""
+    """Tests for the production FormulaEngine class."""
     
-    @pytest.fixture
-    def sample_columns(self):
-        """Sample column names for testing."""
-        return ["ID", "Age", "Score", "Group", "Rating"]
-    
-    @pytest.fixture
-    def engine(self, sample_columns):
-        """Create a FormulaEngine instance for testing."""
-        return FormulaEngine(columns=sample_columns, n_rows=100)
-    
-    def test_engine_initialization(self, engine, sample_columns):
+    def test_engine_initialization(self, temp_workbook, sample_df):
         """Test engine initializes with correct column mappings."""
-        assert len(engine.column_map) == len(sample_columns)
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
+        )
+        
         assert engine.n_rows == 100
-        assert engine.data_start_row == 2
-        assert engine.data_end_row == 101
+        assert len(engine.col_mapping) == 5
+        assert "Age" in engine.col_mapping
+        assert engine.col_mapping["Age"] == "B"
     
-    def test_get_column(self, engine):
-        """Test get_column returns correct ColumnMapping."""
-        col = engine.get_column("Age")
-        
-        assert col is not None
-        assert col.name == "Age"
-        assert col.letter == "B"
-        assert col.index == 2
-    
-    def test_get_column_not_found(self, engine):
-        """Test get_column returns None for unknown column."""
-        col = engine.get_column("NonExistent")
-        assert col is None
-    
-    def test_get_column_range(self, engine):
-        """Test get_column_range returns correct range string."""
-        range_str = engine.get_column_range("Score")
-        assert range_str == "'00_RAW_DATA_LOCKED'!C2:C101"
-    
-    def test_get_column_range_raises_for_unknown(self, engine):
-        """Test get_column_range raises ValueError for unknown column."""
-        with pytest.raises(ValueError, match="Column 'Unknown' not found"):
-            engine.get_column_range("Unknown")
-    
-    def test_generate_descriptive_formulas(self, engine):
-        """Test descriptive statistics formula generation."""
-        results = engine.generate_descriptive_formulas(
-            col_name="Age",
-            output_col=2,
-            output_start_row=5
+    def test_numeric_column_detection(self, temp_workbook, sample_df):
+        """Test engine correctly detects numeric columns."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
         )
         
-        assert len(results) == 11
-        
-        formula_types = [r.formula_type for r in results]
-        assert FormulaType.COUNT in formula_types
-        assert FormulaType.MEAN in formula_types
-        assert FormulaType.STDEV in formula_types
-        assert FormulaType.SKEWNESS in formula_types
-        
-        count_formula = next(r for r in results if r.formula_type == FormulaType.COUNT)
-        assert "COUNT(" in count_formula.formula
-        assert "'00_RAW_DATA_LOCKED'!B2:B101" in count_formula.formula
+        assert "Age" in engine.numeric_cols
+        assert "Score" in engine.numeric_cols
+        assert "Rating" in engine.numeric_cols
+        assert "Group" in engine.categorical_cols
     
-    def test_generate_correlation_formula(self, engine):
-        """Test correlation formula generation."""
-        formula = engine.generate_correlation_formula("Age", "Score")
-        
-        assert formula.startswith("=CORREL(")
-        assert "'00_RAW_DATA_LOCKED'!B2:B101" in formula
-        assert "'00_RAW_DATA_LOCKED'!C2:C101" in formula
-    
-    def test_generate_ttest_formula(self, engine):
-        """Test t-test formula generation."""
-        formula = engine.generate_ttest_formula("Age", "Score", tails=2, test_type=2)
-        
-        assert formula.startswith("=T.TEST(")
-        assert ",2,2)" in formula
-    
-    def test_generate_grouped_mean_formula(self, engine):
-        """Test grouped mean (AVERAGEIF) formula generation."""
-        formula = engine.generate_grouped_mean_formula(
-            value_col="Score",
-            group_col="Group",
-            group_value="A"
+    def test_col_mapping_letters(self, temp_workbook, sample_df):
+        """Test column letter mapping is correct."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
         )
         
-        assert formula.startswith("=AVERAGEIF(")
-        assert '"A"' in formula
-    
-    def test_generate_grouped_count_formula(self, engine):
-        """Test grouped count (COUNTIF) formula generation."""
-        formula = engine.generate_grouped_count_formula(
-            group_col="Group",
-            group_value=1
-        )
-        
-        assert formula.startswith("=COUNTIF(")
-        assert "1" in formula
-    
-    def test_generate_missing_analysis_formulas(self, engine):
-        """Test missing data analysis formula generation."""
-        results = engine.generate_missing_analysis_formulas(
-            col_names=["Age", "Score"],
-            output_start_row=5
-        )
-        
-        assert len(results) == 6
-        
-        valid_n = [r for r in results if r.formula_type == FormulaType.VALID_N]
-        missing = [r for r in results if r.formula_type == FormulaType.MISSING]
-        
-        assert len(valid_n) == 2
-        assert len(missing) == 2
+        assert engine.col_mapping["ID"] == "A"
+        assert engine.col_mapping["Age"] == "B"
+        assert engine.col_mapping["Score"] == "C"
+        assert engine.col_mapping["Group"] == "D"
+        assert engine.col_mapping["Rating"] == "E"
 
 
-class TestCreateFormulaEngine:
-    """Tests for the factory function."""
+class TestTaskExecution:
+    """Tests for task execution methods."""
     
-    def test_create_formula_engine(self):
-        """Test factory function creates engine correctly."""
-        columns = ["A", "B", "C"]
-        engine = create_formula_engine(columns=columns, n_rows=50)
-        
-        assert isinstance(engine, FormulaEngine)
-        assert engine.n_rows == 50
-        assert len(engine.column_map) == 3
-
-
-class TestFormulaResult:
-    """Tests for FormulaResult dataclass."""
-    
-    def test_formula_result_creation(self):
-        """Test FormulaResult can be created with all fields."""
-        result = FormulaResult(
-            cell="B5",
-            formula="=AVERAGE(A2:A100)",
-            label="Mean",
-            formula_type=FormulaType.MEAN
+    def test_execute_descriptive_stats_task(self, temp_workbook, sample_df):
+        """Test descriptive statistics task execution."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
         )
         
-        assert result.cell == "B5"
-        assert result.formula == "=AVERAGE(A2:A100)"
-        assert result.label == "Mean"
-        assert result.formula_type == FormulaType.MEAN
+        task = TaskSpec(
+            id="1.1",
+            name="Descriptive Statistics",
+            task_type=TaskType.DESCRIPTIVE_STATS,
+            phase="3_Descriptive",
+            objective="Calculate descriptive statistics for all numeric variables",
+            output_sheet="03_DESCRIPTIVES"
+        )
+        
+        result = engine.execute_task(task)
+        
+        assert "sheet_name" in result
+        assert "formulas" in result
+        assert len(result["formulas"]) > 0
+    
+    def test_execute_missing_data_task(self, temp_workbook, sample_df):
+        """Test missing data analysis task execution."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
+        )
+        
+        task = TaskSpec(
+            id="1.2",
+            name="Missing Data Analysis",
+            task_type=TaskType.MISSING_DATA,
+            phase="1_Data_Validation",
+            objective="Analyze missing data patterns across all variables",
+            output_sheet="01_MISSING"
+        )
+        
+        result = engine.execute_task(task)
+        
+        assert "sheet_name" in result
+        assert result["sheet_name"] == "01_MISSING"
+    
+    def test_execute_correlation_task(self, temp_workbook, sample_df):
+        """Test correlation matrix task execution."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
+        )
+        
+        task = TaskSpec(
+            id="2.1",
+            name="Correlation Matrix",
+            task_type=TaskType.CORRELATION_MATRIX,
+            phase="4_Inferential",
+            objective="Generate correlation matrix for numeric variables",
+            output_sheet="04_CORRELATIONS"
+        )
+        
+        result = engine.execute_task(task)
+        
+        assert "sheet_name" in result
+        assert "formulas" in result
+
+
+class TestFormulaGeneration:
+    """Tests for formula string generation."""
+    
+    def test_format_criteria_string(self, temp_workbook, sample_df):
+        """Test criteria formatting for string values."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
+        )
+        
+        criteria = engine._format_criteria("A")
+        assert criteria == '"A"'
+    
+    def test_format_criteria_number(self, temp_workbook, sample_df):
+        """Test criteria formatting for numeric values."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
+        )
+        
+        criteria = engine._format_criteria(42)
+        assert criteria == "42"
+    
+    def test_format_criteria_boolean(self, temp_workbook, sample_df):
+        """Test criteria formatting for boolean values."""
+        engine = FormulaEngine(
+            workbook_path=temp_workbook,
+            df=sample_df,
+            session_id="test_session"
+        )
+        
+        assert engine._format_criteria(True) == "TRUE"
+        assert engine._format_criteria(False) == "FALSE"

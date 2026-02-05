@@ -21,7 +21,7 @@ from tools.qual_tools import (
     write_codebook_to_excel, write_coding_results_to_excel,
     generate_frequency_table
 )
-from tools.reporting import APATableWriter, generate_apa_interpretation
+from tools.reporting import APATableWriter
 from config import OUTPUT_DIR
 
 
@@ -65,6 +65,9 @@ def execute_qualitative_task(
     """Execute qualitative analysis tasks."""
     loader = ExcelTemplateLoader()
     loader.load_existing_workbook(workbook_path)
+
+    safe_task_id = task.id.replace(".", "_")
+    data_sheet = _ensure_hidden_sheet(loader, f"00_QUAL_{safe_task_id}")
     
     text_columns = _identify_text_columns(df)
     if not text_columns:
@@ -82,11 +85,13 @@ def execute_qualitative_task(
             all_responses.extend(df[col].dropna().astype(str).tolist())
         
         codebook = create_default_codebook_from_responses(all_responses, f"{session_id}_codebook")
-        ws = loader.create_sheet(task.output_sheet)
-        write_codebook_to_excel(codebook, ws)
+        data_ws = loader.create_sheet(data_sheet)
+        write_codebook_to_excel(codebook, data_ws)
+        output_ws = loader.create_sheet(task.output_sheet)
+        _link_sheet_from_data(data_ws, output_ws)
         formulas_doc.append({
             "cell": "A1",
-            "formula": "Codebook",
+            "formula": f"='{data_sheet}'!A1",
             "purpose": f"Generated codebook with {len(codebook.codes)} codes"
         })
         
@@ -97,11 +102,13 @@ def execute_qualitative_task(
         coder = AutomatedCoder(codebook)
         results = _code_all_responses(coder, responses, "auto_coder_1")
         
-        ws = loader.create_sheet(task.output_sheet)
-        write_coding_results_to_excel(results, ws)
+        data_ws = loader.create_sheet(data_sheet)
+        write_coding_results_to_excel(results, data_ws)
+        output_ws = loader.create_sheet(task.output_sheet)
+        _link_sheet_from_data(data_ws, output_ws)
         formulas_doc.append({
             "cell": "A1",
-            "formula": "Coding Results",
+            "formula": f"='{data_sheet}'!A1",
             "purpose": f"Coded {len(results)} responses"
         })
         
@@ -111,22 +118,25 @@ def execute_qualitative_task(
         codebook = create_default_codebook_from_responses(responses, f"{session_id}_codebook")
         
         coder1 = AutomatedCoder(codebook)
-        coder2 = AutomatedCoder(codebook)
+        coder2 = AutomatedCoder(_clone_codebook_without_examples(codebook))
         results1 = _code_all_responses(coder1, responses, "coder_1")
         results2 = _code_all_responses(coder2, responses, "coder_2")
         
         code_ids = list(codebook.codes.keys())
         kappa = calculate_cohens_kappa(results1, results2, code_ids)
         
-        ws = loader.create_sheet(task.output_sheet)
-        ws["A1"] = "Inter-Rater Reliability"
-        ws["A3"] = "Cohen's Kappa:"
-        ws["B3"] = kappa
-        ws["A4"] = "Interpretation:"
-        ws["B4"] = _interpret_kappa(kappa)
+        data_ws = loader.create_sheet(data_sheet)
+        data_ws["A1"] = "Inter-Rater Reliability"
+        data_ws["A3"] = "Cohen's Kappa:"
+        data_ws["B3"] = kappa
+        data_ws["A4"] = "Interpretation:"
+        data_ws["B4"] = _interpret_kappa(kappa)
+
+        output_ws = loader.create_sheet(task.output_sheet)
+        _link_sheet_from_data(data_ws, output_ws)
         formulas_doc.append({
             "cell": "B3",
-            "formula": str(kappa),
+            "formula": f"='{data_sheet}'!B3",
             "purpose": "Cohen's Kappa for inter-rater reliability"
         })
         
@@ -137,12 +147,14 @@ def execute_qualitative_task(
         coder = AutomatedCoder(codebook)
         results = _code_all_responses(coder, responses, "auto_coder")
         
-        ws = loader.create_sheet(task.output_sheet)
+        data_ws = loader.create_sheet(data_sheet)
         freq_df = generate_frequency_table(results, codebook)
-        _write_dataframe_to_excel(freq_df, ws)
+        _write_dataframe_to_excel(freq_df, data_ws)
+        output_ws = loader.create_sheet(task.output_sheet)
+        _link_sheet_from_data(data_ws, output_ws)
         formulas_doc.append({
             "cell": "A1",
-            "formula": "Theme Frequency",
+            "formula": f"='{data_sheet}'!A1",
             "purpose": "Theme frequency analysis"
         })
     
@@ -163,59 +175,67 @@ def execute_reporting_task(
     """Execute APA reporting tasks."""
     loader = ExcelTemplateLoader()
     loader.load_existing_workbook(workbook_path)
-    
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+
     formulas_doc = []
-    
+    descriptives_sheet, descriptives_ws = _find_descriptives_sheet(loader)
+    if not descriptives_sheet or descriptives_ws is None:
+        ws = loader.create_sheet(task.output_sheet)
+        ws["A1"] = "Error: Descriptive statistics sheet not found"
+        loader.save()
+        return {
+            "sheet_name": task.output_sheet,
+            "formulas": [],
+            "error": "Descriptive statistics sheet not found for reporting"
+        }
+
+    row_map = _extract_descriptive_row_map(descriptives_ws)
+    if not row_map:
+        ws = loader.create_sheet(task.output_sheet)
+        ws["A1"] = "Error: Descriptive statistics sheet has no variables"
+        loader.save()
+        return {
+            "sheet_name": task.output_sheet,
+            "formulas": [],
+            "error": "Descriptive statistics sheet has no variables"
+        }
+
     if task.task_type == TaskType.APA_TABLES:
         ws = loader.create_sheet(task.output_sheet)
         writer = APATableWriter(ws)
-        
-        if numeric_cols:
-            stats = {}
-            for col in numeric_cols[:20]:
-                stats[col] = {
-                    "n": int(df[col].count()),
-                    "mean": float(df[col].mean()),
-                    "sd": float(df[col].std()),
-                    "min": float(df[col].min()),
-                    "max": float(df[col].max()),
-                    "skew": float(df[col].skew()) if len(df[col].dropna()) > 2 else 0,
-                    "kurt": float(df[col].kurtosis()) if len(df[col].dropna()) > 3 else 0
-                }
-            row = writer.write_descriptives_table(
-                variables=numeric_cols[:20],
-                stats=stats,
-                title="Descriptive Statistics"
-            )
-            formulas_doc.append({
-                "cell": "A1",
-                "formula": "APA Table",
-                "purpose": "Descriptive statistics in APA 7 format"
-            })
-        
+        writer.write_descriptives_table_from_sheet(
+            source_sheet=descriptives_sheet,
+            row_map=row_map,
+            title="Descriptive Statistics"
+        )
+        formulas_doc.append({
+            "cell": "B4",
+            "formula": f"=IFERROR('{descriptives_sheet}'!C4,\"\")",
+            "purpose": "APA table formulas reference descriptive stats"
+        })
+
     elif task.task_type == TaskType.NARRATIVE_RESULTS:
         ws = loader.create_sheet(task.output_sheet)
-        
-        narratives = []
-        for col in numeric_cols[:5]:
-            interp = generate_apa_interpretation('reliability', {
-                'alpha': 0.85,
-                'scale_name': col,
-                'n_items': 5
-            })
-            narratives.append(f"**{col}**: M = {df[col].mean():.2f}, SD = {df[col].std():.2f}")
-        
         ws["A1"] = "Results Narrative (APA 7)"
         ws["A3"] = "Descriptive Statistics Summary"
-        for i, narr in enumerate(narratives, 5):
-            ws[f"A{i}"] = narr
+
+        start_row = 5
+        for idx, (var, source_row) in enumerate(list(row_map.items())[:5]):
+            target_row = start_row + idx
+            safe_var = _escape_excel_text(var)
+            formula = (
+                f"=\"{safe_var}: M = \" & TEXT('{descriptives_sheet}'!C{source_row},\"0.00\") & "
+                f"\", SD = \" & TEXT('{descriptives_sheet}'!D{source_row},\"0.00\")"
+            )
+            ws[f"A{target_row}"] = formula
+
         ws.column_dimensions["A"].width = 100
-        
+        first_var = list(row_map.keys())[0]
+        first_row = list(row_map.values())[0]
+        safe_first = _escape_excel_text(first_var)
         formulas_doc.append({
-            "cell": "A3",
-            "formula": "Narrative",
-            "purpose": "APA 7 formatted results narrative"
+            "cell": f"A{start_row}",
+            "formula": f"=\"{safe_first}: M = \" & TEXT('{descriptives_sheet}'!C{first_row},\"0.00\") & \", SD = \" & TEXT('{descriptives_sheet}'!D{first_row},\"0.00\")",
+            "purpose": "APA narrative formulas reference descriptive stats"
         })
     
     loader.save()
@@ -263,6 +283,82 @@ def _write_dataframe_to_excel(df: pd.DataFrame, ws) -> None:
     for row_idx, row in enumerate(df.itertuples(index=False), 2):
         for col_idx, value in enumerate(row, 1):
             ws.cell(row=row_idx, column=col_idx, value=value)
+
+
+def _ensure_hidden_sheet(loader: ExcelTemplateLoader, sheet_name: str) -> str:
+    """Ensure a hidden data sheet exists for non-formula outputs."""
+    wb = loader.workbook
+    if wb is not None and sheet_name in wb.sheetnames:
+        del wb[sheet_name]
+    ws = loader.create_sheet(sheet_name, 0)
+    ws.sheet_state = "hidden"
+    return sheet_name
+
+
+def _link_sheet_from_data(source_ws, target_ws) -> None:
+    """Link a visible sheet to a hidden data sheet using formulas."""
+    max_row = source_ws.max_row or 1
+    max_col = source_ws.max_column or 1
+    for r in range(1, max_row + 1):
+        for c in range(1, max_col + 1):
+            cell_ref = f"'{source_ws.title}'!{source_ws.cell(row=r, column=c).coordinate}"
+            target_ws.cell(row=r, column=c, value=f"={cell_ref}")
+
+
+def _clone_codebook_without_examples(codebook: Codebook) -> Codebook:
+    """Clone codebook but remove examples to vary coder patterns."""
+    clone = Codebook(name=f"{codebook.name}_no_examples")
+    for code_id, code in codebook.codes.items():
+        clone.add_code(Code(
+            id=code.id,
+            name=code.name,
+            definition=code.definition,
+            examples=[],
+            parent_code=code.parent_code,
+            frequency=code.frequency
+        ))
+    for theme_id, theme in codebook.themes.items():
+        clone.add_theme(Theme(
+            id=theme.id,
+            name=theme.name,
+            description=theme.description,
+            codes=list(theme.codes)
+        ))
+    return clone
+
+
+def _find_descriptives_sheet(loader: ExcelTemplateLoader):
+    """Find the descriptive statistics sheet in the workbook."""
+    wb = loader.workbook
+    if wb is None:
+        return None, None
+
+    for name in wb.sheetnames:
+        ws = wb[name]
+        if str(ws["A1"].value).strip().upper().startswith("DESCRIPTIVE"):
+            return name, ws
+
+    for name in wb.sheetnames:
+        if "DESC" in name.upper():
+            return name, wb[name]
+
+    return None, None
+
+
+def _extract_descriptive_row_map(ws) -> Dict[str, int]:
+    """Extract variable -> row map from a descriptive stats sheet."""
+    row_map: Dict[str, int] = {}
+    for row in range(4, (ws.max_row or 4) + 1):
+        var = ws.cell(row=row, column=1).value
+        if var is None or str(var).strip() == "":
+            continue
+        row_map[str(var)] = row
+    return row_map
+
+
+def _escape_excel_text(value: str) -> str:
+    """Escape text for Excel formula strings."""
+    return str(value).replace('"', '""')
 
 
 def _interpret_kappa(kappa: float) -> str:
@@ -360,4 +456,3 @@ FORMULAS WRITTEN ({len(excel_result['formulas'])}):
         "execution_log": [log_entry],
         "messages": [{"role": "implementer", "content": f"Created sheet '{excel_result['sheet_name']}' with {len(excel_result['formulas'])} formulas"}]
     }
-

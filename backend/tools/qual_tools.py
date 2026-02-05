@@ -1,6 +1,7 @@
 """
 Qualitative Analysis Tools.
 Automated codebook creation, coding, and inter-rater reliability.
+Supports both keyword-based and LLM-based coding for PhD-level validity.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -8,10 +9,15 @@ from dataclasses import dataclass, field
 from collections import Counter
 import re
 import hashlib
+import json
+import asyncio
 
 import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter
+
+from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 
 
 @dataclass
@@ -159,6 +165,175 @@ class AutomatedCoder:
                     coder_id=coder_id
                 )
                 results.append(result)
+        return results
+
+
+class LLMCoder:
+    """
+    LLM-based qualitative coder for PhD-level thematic analysis.
+    Uses Claude or OpenAI to code responses with nuanced understanding.
+    """
+    
+    def __init__(
+        self,
+        codebook: Codebook,
+        provider: str = "anthropic",
+        model: Optional[str] = None,
+        temperature: float = 0.1
+    ):
+        """
+        Initialize LLM-based coder.
+        
+        Args:
+            codebook: Codebook with codes and definitions.
+            provider: 'anthropic' or 'openai'.
+            model: Model name (defaults to config values).
+            temperature: LLM temperature for coding consistency.
+        """
+        self.codebook = codebook
+        self.provider = provider
+        self.temperature = temperature
+        
+        if provider == "anthropic":
+            from config import SONNET_MODEL, ANTHROPIC_API_KEY
+            self.llm = ChatAnthropic(
+                model=model or SONNET_MODEL,
+                api_key=ANTHROPIC_API_KEY,
+                temperature=temperature,
+                max_tokens=1000
+            )
+        else:
+            from config import OPENAI_MODEL, OPENAI_API_KEY
+            self.llm = ChatOpenAI(
+                model=model or OPENAI_MODEL,
+                api_key=OPENAI_API_KEY,
+                temperature=temperature,
+                max_tokens=1000
+            )
+        
+        self._codebook_prompt = self._build_codebook_prompt()
+    
+    def _build_codebook_prompt(self) -> str:
+        """Build the codebook description for the LLM prompt."""
+        lines = ["CODEBOOK FOR QUALITATIVE CODING:\n"]
+        for code_id, code in self.codebook.codes.items():
+            lines.append(f"- {code_id}: {code.name}")
+            lines.append(f"  Definition: {code.definition}")
+            if code.examples:
+                lines.append(f"  Examples: {', '.join(code.examples[:3])}")
+        return "\n".join(lines)
+    
+    async def code_response_async(
+        self,
+        response_id: str,
+        response_text: str,
+        coder_id: str = "llm_coder"
+    ) -> CodingResult:
+        """
+        Code a single response using the LLM.
+        
+        Args:
+            response_id: Unique identifier for the response.
+            response_text: Text to code.
+            coder_id: Identifier for this coder.
+        
+        Returns:
+            CodingResult with assigned codes and confidence.
+        """
+        prompt = f"""{self._codebook_prompt}
+
+RESPONSE TO CODE:
+"{response_text}"
+
+INSTRUCTIONS:
+1. Read the response carefully.
+2. Assign ALL applicable codes from the codebook above.
+3. Return ONLY a JSON object with this exact format:
+{{"codes": ["C01", "C03"], "confidence": 0.85, "reasoning": "Brief explanation"}}
+
+If no codes apply, return: {{"codes": [], "confidence": 1.0, "reasoning": "No applicable codes"}}
+"""
+        
+        try:
+            response = await self.llm.ainvoke([{"role": "user", "content": prompt}])
+            result_text = response.content.strip()
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{[^{}]*\}', result_text)
+            if json_match:
+                parsed = json.loads(json_match.group())
+                assigned_codes = [c for c in parsed.get("codes", []) if c in self.codebook.codes]
+                confidence = float(parsed.get("confidence", 0.8))
+            else:
+                assigned_codes = []
+                confidence = 0.5
+                
+        except Exception as e:
+            # Fallback to empty on error
+            assigned_codes = []
+            confidence = 0.0
+        
+        return CodingResult(
+            response_id=response_id,
+            response_text=response_text,
+            assigned_codes=assigned_codes,
+            coder_id=coder_id,
+            confidence=confidence
+        )
+    
+    def code_response(
+        self,
+        response_id: str,
+        response_text: str,
+        coder_id: str = "llm_coder"
+    ) -> CodingResult:
+        """Synchronous wrapper for code_response_async."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If already in async context, create a new task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        self.code_response_async(response_id, response_text, coder_id)
+                    )
+                    return future.result()
+            else:
+                return loop.run_until_complete(
+                    self.code_response_async(response_id, response_text, coder_id)
+                )
+        except RuntimeError:
+            return asyncio.run(
+                self.code_response_async(response_id, response_text, coder_id)
+            )
+    
+    async def code_batch_async(
+        self,
+        responses: List[Tuple[str, str]],
+        coder_id: str = "llm_coder",
+        batch_size: int = 5
+    ) -> List[CodingResult]:
+        """
+        Code multiple responses in batches.
+        
+        Args:
+            responses: List of (response_id, response_text) tuples.
+            coder_id: Coder identifier.
+            batch_size: Number of concurrent requests.
+        
+        Returns:
+            List of CodingResults.
+        """
+        results = []
+        for i in range(0, len(responses), batch_size):
+            batch = responses[i:i + batch_size]
+            tasks = [
+                self.code_response_async(rid, text, coder_id)
+                for rid, text in batch
+            ]
+            batch_results = await asyncio.gather(*tasks)
+            results.extend(batch_results)
         return results
 
 

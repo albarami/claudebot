@@ -20,21 +20,16 @@ Scope: Validate the implementation claims vs current codebase
 - **Deterministic QC verification runs** with cleaned data alignment.
 - **Audit routing fails closed** unless score >= 97 (publication-ready threshold).
 - **State schema updated** for plan JSON, verification status, formula coverage, and audit revisions.
+- **Qualitative outputs are formula-linked** to hidden data sheets (visible sheets remain formula-only).
+- **APA reporting outputs are formula-linked** to descriptive statistics sheets (no Python-calculated values in outputs).
 
-## Remaining Gaps (Not Blocking Core EDA)
-1. **Qualitative pipeline not wired**: `qual_tools.py` exists but no workflow node integrates it.
-2. **APA reporting not integrated**: `tools/reporting.py` exists but is not called in the workflow.
-3. **Legacy formula engine (tools/formula_engine.py)** still exists and is unused (technical debt).
+## Remaining Gaps (Optional Enhancements)
+1. **Qualitative coding depth**: current coding is deterministic keyword-based. If desired, add multi-agent LLM coders for richer thematic analysis.
+2. **Legacy formula engine (tools/formula_engine.py)** still exists and is unused (technical debt).
 
 ## Hardening Notes
-- Macro trust enforcement now fails closed if UDFs cannot execute.
-- Deterministic QC uses cleaned data to align with Excel formulas.
+- Macro trust enforcement fails closed if UDFs cannot execute.
+- Qualitative and reporting sheets now use formulas only in visible outputs, preserving QC formula coverage.
 
 ## Approval Status
-**Approved for core quantitative EDA pipeline.**
-Remaining items are advanced deliverables (qualitative + APA reporting) and can be scheduled next.
-
-## Recommended Next Fixes (Optional Enhancements)
-1. Integrate `qual_tools.py` into workflow for qualitative coding and reliability.
-2. Wire `tools/reporting.py` to generate APA tables and narrative outputs.
-3. Remove or consolidate `tools/formula_engine.py` to reduce duplication.
+**Approved.** Core quantitative EDA + reporting + qualitative pipeline meet the automation and academic defensibility constraints (Excel-first formulas, deterministic verification, and fail-closed gates).

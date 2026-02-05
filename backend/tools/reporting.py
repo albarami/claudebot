@@ -218,6 +218,70 @@ class APATableWriter:
         
         return row + 2
 
+    def write_descriptives_table_from_sheet(
+        self,
+        source_sheet: str,
+        row_map: Dict[str, int],
+        title: str = "Descriptive Statistics",
+        start_row: int = 1
+    ) -> int:
+        """
+        Write APA-formatted descriptive table with formulas referencing a source sheet.
+
+        Args:
+            source_sheet: Sheet name containing descriptive stats.
+            row_map: Mapping of variable name -> row index in source sheet.
+            title: Table title.
+            start_row: Starting row.
+
+        Returns:
+            Next available row after table.
+        """
+        row = start_row
+
+        self.ws.cell(row=row, column=1, value="Table X")
+        self.ws.cell(row=row, column=1).font = self.style.title_font
+        row += 1
+
+        self.ws.cell(row=row, column=1, value=title)
+        self.ws.cell(row=row, column=1).font = Font(
+            name='Times New Roman', size=12, italic=True
+        )
+        row += 2
+
+        headers = ["Variable", "n", "M", "SD", "Min", "Max", "Skew", "Kurt"]
+        for col, header in enumerate(headers, 1):
+            cell = self.ws.cell(row=row, column=col, value=header)
+            cell.font = self.style.header_font
+            cell.border = self.style.header_border
+            cell.alignment = Alignment(horizontal='center')
+        row += 1
+
+        for var, source_row in row_map.items():
+            self.ws.cell(row=row, column=1, value=var).font = self.style.body_font
+
+            formulas = [
+                f"=IFERROR('{source_sheet}'!B{source_row},\"\")",
+                f"=IFERROR(ROUND('{source_sheet}'!C{source_row},2),\"\")",
+                f"=IFERROR(ROUND('{source_sheet}'!D{source_row},2),\"\")",
+                f"=IFERROR(ROUND('{source_sheet}'!G{source_row},2),\"\")",
+                f"=IFERROR(ROUND('{source_sheet}'!H{source_row},2),\"\")",
+                f"=IFERROR(ROUND('{source_sheet}'!J{source_row},2),\"\")",
+                f"=IFERROR(ROUND('{source_sheet}'!K{source_row},2),\"\")",
+            ]
+
+            for col, formula in enumerate(formulas, 2):
+                cell = self.ws.cell(row=row, column=col, value=formula)
+                cell.font = self.style.body_font
+                cell.alignment = Alignment(horizontal='center')
+            row += 1
+
+        row += 1
+        note = "Note. M = mean; SD = standard deviation; Skew = skewness; Kurt = kurtosis."
+        self.ws.cell(row=row, column=1, value=note).font = self.style.note_font
+
+        return row + 2
+
     def write_correlation_table(
         self,
         variables: List[str],
