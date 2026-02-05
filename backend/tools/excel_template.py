@@ -1,9 +1,11 @@
-"""
-Excel Workbook Manager.
-Creates fresh workbooks for each survey analysis.
-Each survey generates a unique workbook - no static templates.
+﻿"""
+Excel Template Loader.
+Handles macro-enabled workbook (.xlsm) operations with VBA preservation.
+NOTE: No fixed analysis template is used. Workbooks are created dynamically.
 """
 
+import os
+import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -12,35 +14,47 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter
 
+from config import ALLOW_TEMPLATE
 
-class ExcelWorkbookManager:
+try:
+    import win32com.client as win32  # type: ignore
+except Exception:
+    win32 = None
+
+
+TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates"
+TEMPLATE_FILENAME = "analysis_template.xlsm"
+UDF_MODULE_PATH = Path(__file__).parent / "udf" / "analysis_udf.bas"
+
+
+class ExcelTemplateLoader:
     """
-    Creates and manages Excel workbooks for survey analysis.
-    Each survey gets a fresh workbook with dynamic content.
+    Loader for macro-enabled Excel workbooks.
+    Preserves VBA macros and UDFs when writing sheets.
     """
 
-    def __init__(self):
-        """Initialize the workbook manager."""
+    def __init__(self, template_path: Optional[Path] = None):
+        self.template_path = template_path or (TEMPLATE_DIR / TEMPLATE_FILENAME)
         self.workbook: Optional[Workbook] = None
         self.output_path: Optional[Path] = None
 
-    def create_workbook(
+    def create_workbook_from_template(
         self,
         output_path: Path,
         session_id: str
     ) -> Workbook:
         """
-        Create a fresh workbook for this analysis session.
-
-        Args:
-            output_path: Path for the output .xlsx file.
-            session_id: Session identifier for tracking.
-
-        Returns:
-            New Workbook instance.
+        Create a new workbook. Dynamic macro workbook is the default.
+        A fixed template is only used if ALLOW_TEMPLATE is enabled.
         """
-        self.workbook = Workbook()
-        self.output_path = output_path.with_suffix('.xlsx')
+        if ALLOW_TEMPLATE and self.template_path.exists():
+            shutil.copy2(self.template_path, output_path)
+            self.workbook = load_workbook(output_path, keep_vba=True)
+        else:
+            create_macro_workbook(output_path)
+            self.workbook = load_workbook(output_path, keep_vba=True)
+
+        self.output_path = output_path
 
         if "Sheet" in self.workbook.sheetnames:
             del self.workbook["Sheet"]
@@ -50,15 +64,7 @@ class ExcelWorkbookManager:
         return self.workbook
 
     def load_existing_workbook(self, workbook_path: Path) -> Workbook:
-        """
-        Load an existing macro-enabled workbook.
-
-        Args:
-            workbook_path: Path to existing .xlsm file.
-
-        Returns:
-            Workbook instance with VBA preserved.
-        """
+        """Load an existing macro-enabled workbook."""
         keep_vba = workbook_path.suffix.lower() == '.xlsm'
         self.workbook = load_workbook(workbook_path, keep_vba=keep_vba)
         self.output_path = workbook_path
@@ -82,15 +88,23 @@ class ExcelWorkbookManager:
         ws["B4"] = session_id
         ws["A5"] = "Generated:"
         ws["B5"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ws["A6"] = ""
-        ws["A7"] = "Computation Method:"
-        ws["B7"] = "Excel formulas + Python verification"
-        ws["A8"] = ""
-        ws["A9"] = "All numeric outputs use Excel formulas referencing raw data."
-        ws["A10"] = "Advanced statistics verified against Python ground truth."
-        ws["A11"] = "See verification report for statistical accuracy confirmation."
+        ws["A6"] = "Template Version:"
+        ws["B6"] = "dynamic-1.0"
+        ws["A7"] = ""
+        ws["A8"] = "Available UDFs:"
+        ws["A9"] = "- SHAPIRO_WILK(range)"
+        ws["A10"] = "- LEVENE_TEST(range1, range2, ...)"
+        ws["A11"] = "- CRONBACH_ALPHA(range)"
+        ws["A12"] = "- FISHER_Z(r)"
+        ws["A13"] = "- FISHER_Z_INV(z)"
+        ws["A14"] = "- P_VALUE_T(t, df)"
+        ws["A15"] = "- P_VALUE_F(F, df1, df2)"
+        ws["A16"] = "- COHENS_D(mean1, sd1, n1, mean2, sd2, n2)"
+        ws["A17"] = "- ETA_SQUARED(SSbetween, SStotal)"
+        ws["A18"] = "- CRAMERS_V(chiSq, n, minDim)"
+        ws["A19"] = "- CI_MEAN(mean, sd, n, [confidence])"
 
-        ws.column_dimensions["A"].width = 50
+        ws.column_dimensions["A"].width = 40
         ws.column_dimensions["B"].width = 30
 
     def create_sheet(
@@ -98,19 +112,7 @@ class ExcelWorkbookManager:
         sheet_name: str,
         position: Optional[int] = None
     ) -> Worksheet:
-        """
-        Create a new sheet in the workbook.
-
-        Args:
-            sheet_name: Name for the new sheet (max 31 chars).
-            position: Optional position index for the sheet.
-
-        Returns:
-            The created worksheet.
-
-        Raises:
-            ValueError: If workbook not initialized or invalid sheet name.
-        """
+        """Create a new sheet in the workbook."""
         if self.workbook is None:
             raise ValueError("Workbook not initialized. Call create_workbook_from_template first.")
 
@@ -127,15 +129,7 @@ class ExcelWorkbookManager:
         return ws
 
     def get_sheet(self, sheet_name: str) -> Optional[Worksheet]:
-        """
-        Get an existing sheet by name.
-
-        Args:
-            sheet_name: Name of the sheet.
-
-        Returns:
-            Worksheet if exists, None otherwise.
-        """
+        """Get an existing sheet by name."""
         if self.workbook is None:
             return None
 
@@ -145,18 +139,7 @@ class ExcelWorkbookManager:
         return None
 
     def save(self, path: Optional[Path] = None) -> Path:
-        """
-        Save the workbook preserving VBA.
-
-        Args:
-            path: Optional output path. Uses original if not specified.
-
-        Returns:
-            Path where workbook was saved.
-
-        Raises:
-            ValueError: If workbook not initialized.
-        """
+        """Save the workbook preserving VBA."""
         if self.workbook is None:
             raise ValueError("Workbook not initialized.")
 
@@ -180,16 +163,55 @@ class ExcelWorkbookManager:
         return sanitize_sheet_name(sheet_name) in self.workbook.sheetnames
 
 
+def create_macro_workbook(output_path: Path) -> Path:
+    """
+    Create a new macro-enabled workbook dynamically and import UDF module.
+    Requires Excel + pywin32 and VBA project access enabled.
+    """
+    if win32 is None:
+        raise RuntimeError("pywin32 is required to create macro-enabled workbooks dynamically")
+    if not UDF_MODULE_PATH.exists():
+        raise RuntimeError(f"UDF module not found: {UDF_MODULE_PATH}")
+
+    excel = win32.DispatchEx("Excel.Application")
+    excel.Visible = False
+    excel.DisplayAlerts = False
+    try:
+        wb = excel.Workbooks.Add()
+        # Import VBA module
+        vb_proj = wb.VBProject  # requires Trust access to VBA project object model
+        vb_proj.VBComponents.Import(str(UDF_MODULE_PATH))
+
+        # Validate UDF availability (fail closed if macros are blocked)
+        test_ws = wb.Worksheets.Add()
+        test_ws.Range("A1").Formula = "=COHENS_D(1,1,2,2,1,2)"
+        excel.CalculateFullRebuild()
+        test_val = test_ws.Range("A1").Value
+        test_ws.Delete()
+
+        if test_val is None or (isinstance(test_val, str) and "#NAME?" in test_val):
+            raise RuntimeError("UDF validation failed (macros disabled or VBA import blocked)")
+
+        # Save as macro-enabled workbook
+        wb.SaveAs(str(output_path), FileFormat=52)  # 52 = xlOpenXMLWorkbookMacroEnabled
+        wb.Close(SaveChanges=True)
+    finally:
+        excel.Quit()
+
+    return output_path
+
+
+def ensure_macro_workbook(output_path: Path) -> Path:
+    """Ensure a macro-enabled workbook exists at output_path."""
+    if output_path.suffix.lower() != ".xlsm":
+        output_path = output_path.with_suffix(".xlsm")
+    if not output_path.exists():
+        create_macro_workbook(output_path)
+    return output_path
+
+
 def sanitize_sheet_name(name: str) -> str:
-    """
-    Sanitize sheet name for Excel compatibility.
-
-    Args:
-        name: Original sheet name.
-
-    Returns:
-        Excel-safe sheet name (max 31 chars, no invalid chars).
-    """
+    """Sanitize sheet name for Excel compatibility."""
     invalid_chars = ['\\', '/', '*', '?', ':', '[', ']']
     safe_name = name
     for char in invalid_chars:
@@ -206,18 +228,7 @@ def get_column_range(
     row: int,
     sheet_name: Optional[str] = None
 ) -> str:
-    """
-    Generate an Excel range reference.
-
-    Args:
-        start_col: Starting column (1-indexed).
-        end_col: Ending column (1-indexed).
-        row: Row number.
-        sheet_name: Optional sheet name for cross-sheet reference.
-
-    Returns:
-        Excel range string (e.g., "'Sheet1'!A1:Z1" or "A1:Z1").
-    """
+    """Generate an Excel range reference."""
     start_letter = get_column_letter(start_col)
     end_letter = get_column_letter(end_col)
 
@@ -237,19 +248,7 @@ def get_cell_reference(
     absolute_col: bool = False,
     absolute_row: bool = False
 ) -> str:
-    """
-    Generate an Excel cell reference.
-
-    Args:
-        col: Column number (1-indexed).
-        row: Row number.
-        sheet_name: Optional sheet name.
-        absolute_col: Use absolute column reference ($A).
-        absolute_row: Use absolute row reference ($1).
-
-    Returns:
-        Excel cell reference (e.g., "$A$1", "B2", "'Sheet1'!C3").
-    """
+    """Generate an Excel cell reference."""
     col_letter = get_column_letter(col)
     if absolute_col:
         col_letter = f"${col_letter}"
@@ -274,19 +273,7 @@ def get_data_range(
     end_col: int,
     end_row: int
 ) -> str:
-    """
-    Generate a rectangular data range reference.
-
-    Args:
-        sheet_name: Sheet name.
-        start_col: Starting column (1-indexed).
-        start_row: Starting row.
-        end_col: Ending column (1-indexed).
-        end_row: Ending row.
-
-    Returns:
-        Excel range string (e.g., "'00_RAW_DATA_LOCKED'!A2:Z100").
-    """
+    """Generate a rectangular data range reference."""
     safe_name = sanitize_sheet_name(sheet_name)
     start_letter = get_column_letter(start_col)
     end_letter = get_column_letter(end_col)
@@ -298,35 +285,19 @@ def create_analysis_workbook(
     output_path: Path,
     session_id: str,
     raw_data_path: Optional[Path] = None
-) -> ExcelWorkbookManager:
-    """
-    Create a fresh analysis workbook for this survey.
-
-    Args:
-        output_path: Path for output .xlsx file.
-        session_id: Session identifier.
-        raw_data_path: Optional path to raw data Excel file.
-
-    Returns:
-        Initialized ExcelWorkbookManager with workbook ready.
-    """
-    manager = ExcelWorkbookManager()
-    manager.create_workbook(output_path, session_id)
+) -> ExcelTemplateLoader:
+    """Convenience function to create a new analysis workbook."""
+    loader = ExcelTemplateLoader()
+    loader.create_workbook_from_template(output_path, session_id)
 
     if raw_data_path and raw_data_path.exists():
-        _copy_raw_data(manager, raw_data_path)
+        _copy_raw_data(loader, raw_data_path)
 
-    return manager
+    return loader
 
 
-def _copy_raw_data(manager: ExcelWorkbookManager, raw_data_path: Path) -> None:
-    """
-    Copy raw data to the 00_RAW_DATA_LOCKED sheet.
-
-    Args:
-        manager: Workbook manager with initialized workbook.
-        raw_data_path: Path to source Excel file.
-    """
+def _copy_raw_data(loader: ExcelTemplateLoader, raw_data_path: Path) -> None:
+    """Copy raw data to the 00_RAW_DATA_LOCKED sheet."""
     source_wb = load_workbook(raw_data_path, data_only=True)
     source_ws = source_wb.active
 
@@ -334,7 +305,7 @@ def _copy_raw_data(manager: ExcelWorkbookManager, raw_data_path: Path) -> None:
         source_wb.close()
         return
 
-    dest_ws = manager.create_sheet("00_RAW_DATA_LOCKED", 1)
+    dest_ws = loader.create_sheet("00_RAW_DATA_LOCKED", 1)
 
     for row_idx, row in enumerate(source_ws.iter_rows(values_only=True), 1):
         for col_idx, value in enumerate(row, 1):
@@ -343,5 +314,23 @@ def _copy_raw_data(manager: ExcelWorkbookManager, raw_data_path: Path) -> None:
     source_wb.close()
 
 
-# Legacy alias for backward compatibility
-ExcelTemplateLoader = ExcelWorkbookManager
+def validate_udf_availability() -> Dict[str, bool]:
+    """Check which UDFs are expected to be available."""
+    expected_udfs = [
+        "SHAPIRO_WILK",
+        "LEVENE_TEST",
+        "CRONBACH_ALPHA",
+        "FISHER_Z",
+        "FISHER_Z_INV",
+        "P_VALUE_T",
+        "P_VALUE_F",
+        "COHENS_D",
+        "ETA_SQUARED",
+        "CRAMERS_V",
+        "CI_MEAN"
+    ]
+
+    bas_file_exists = UDF_MODULE_PATH.exists()
+
+    return {udf: bas_file_exists for udf in expected_udfs}
+

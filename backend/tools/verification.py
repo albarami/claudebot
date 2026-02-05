@@ -313,6 +313,9 @@ class ExcelVerifier:
         self.raw_data = raw_data
         self.stats = StatisticalVerifier(raw_data)
 
+        if REQUIRE_EXCEL_RECALC:
+            recalculate_workbook(workbook_path)
+
         keep_vba = workbook_path.suffix.lower() == '.xlsm'
         self.workbook = load_workbook(
             workbook_path,
@@ -642,3 +645,5 @@ def generate_verification_report(results: List[VerificationResult]) -> str:
     lines.append("=" * 60)
 
     return "\n".join(lines)
+from config import REQUIRE_EXCEL_RECALC
+from tools.excel_com import recalculate_workbook

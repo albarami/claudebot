@@ -30,9 +30,9 @@ def create_survey_analysis_workflow():
     Create the complete LangGraph workflow for survey analysis.
     
     Workflow with plan review gate:
-    load_data → strategist → plan_review ─┬─→ implementer ↔ qc_reviewer → auditor → deliverables
-                     ↑                    │
-                     └────────────────────┘ (if plan rejected)
+    load_data -> strategist -> plan_review -> implementer <-> qc_reviewer -> auditor -> deliverables
+                     ^                     |
+                     +---------------------+ (if plan rejected)
     
     Returns:
         Compiled LangGraph application with checkpointing
@@ -68,10 +68,10 @@ def create_survey_analysis_workflow():
     
     workflow.add_edge("load_data", "strategist")
     
-    # Strategist → Plan Review (deterministic validation gate)
+    # Strategist -> Plan Review (deterministic validation gate)
     workflow.add_edge("strategist", "plan_review")
     
-    # Plan Review routing: approved → implementer, rejected → strategist, halt if max revisions
+    # Plan Review routing: approved -> implementer, rejected -> strategist, halt if max revisions
     workflow.add_conditional_edges(
         "plan_review",
         route_after_plan_review,

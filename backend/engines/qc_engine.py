@@ -28,7 +28,7 @@ class DeterministicQC:
     Run BEFORE LLM-based QC for fast, reliable validation.
     """
     
-    RAW_DATA_SHEET = "00_RAW_DATA_LOCKED"
+    RAW_DATA_SHEET = "00_CLEANED_DATA"
     MIN_FORMULA_PERCENTAGE = 50  # Minimum % of data cells that must be formulas
     
     def __init__(self, workbook_path: Path, raw_data: Optional[pd.DataFrame] = None):
@@ -351,7 +351,7 @@ class DeterministicQC:
             "=" * 50,
             "DETERMINISTIC QC RESULTS",
             "=" * 50,
-            f"Status: {'✅ PASSED' if passed else '❌ FAILED'}",
+            f"Status: {'PASSED' if passed else 'FAILED'}",
             "",
             "Metrics:"
         ]
@@ -369,13 +369,13 @@ class DeterministicQC:
             lines.append("")
             lines.append("Errors:")
             for e in self.errors:
-                lines.append(f"  ❌ {e}")
+                lines.append(f"  FAIL: {e}")
         
         if self.warnings:
             lines.append("")
             lines.append("Warnings:")
             for w in self.warnings:
-                lines.append(f"  ⚠️ {w}")
+                lines.append(f"  WARN: {w}")
         
         lines.append("=" * 50)
         

@@ -11,13 +11,13 @@ class Task(TypedDict):
     """Individual task from Master Plan."""
     id: str
     phase: str
+    task_type: str
     name: str
     objective: str
-    method: str
-    formulas: List[str]
-    validation: str
     output_sheet: str
-    acceptance_criteria: List[str]
+    columns: Dict[str, Any]
+    group_by: Optional[str]
+    scale_items: Optional[List[str]]
     status: str  # pending, in_progress, completed, failed
 
 
@@ -67,8 +67,10 @@ class SurveyAnalysisState(TypedDict):
     
     # === PLANNING ===
     master_plan: str
+    plan_json: Dict[str, Any]
     master_plan_approved: bool
     plan_revision_count: int
+    plan_errors: List[str]
     tasks: List[Task]
     total_tasks: int
     
@@ -94,6 +96,12 @@ class SurveyAnalysisState(TypedDict):
     quality_scores: Dict[str, float]
     overall_score: float
     certification: str
+    audit_revision_count: int
+
+    # === VERIFICATION ===
+    verification_status: str
+    formula_coverage: float
+    output_type: str
     
     # === OUTPUT ===
     deliverables: List[str]
@@ -124,8 +132,10 @@ def create_initial_state(session_id: str, file_path: str) -> SurveyAnalysisState
         detected_scales={},
         data_summary="",
         master_plan="",
+        plan_json={},
         master_plan_approved=False,
         plan_revision_count=0,
+        plan_errors=[],
         tasks=[],
         total_tasks=0,
         current_task_idx=0,
@@ -143,6 +153,10 @@ def create_initial_state(session_id: str, file_path: str) -> SurveyAnalysisState
         quality_scores={},
         overall_score=0.0,
         certification="",
+        audit_revision_count=0,
+        verification_status="pending",
+        formula_coverage=0.0,
+        output_type="unknown",
         deliverables=[],
         output_excel_path="",
         execution_log=[],

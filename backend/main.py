@@ -129,7 +129,10 @@ async def upload_file(file: UploadFile = File(...)):
         "certification": None,
         "overall_score": None,
         "output_path": None,
-        "research_questions": []  # Will be populated by analyze endpoint
+        "research_questions": [],  # Will be populated by analyze endpoint
+        "verification_status": "pending",
+        "formula_coverage": None,
+        "output_type": None
     }
     
     return {
@@ -217,6 +220,15 @@ async def run_analysis(session_id: str):
                 
                 if "errors" in state_update:
                     session["errors"].extend(state_update["errors"])
+
+                if "verification_status" in state_update:
+                    session["verification_status"] = state_update["verification_status"]
+
+                if "formula_coverage" in state_update:
+                    session["formula_coverage"] = state_update["formula_coverage"]
+
+                if "output_type" in state_update:
+                    session["output_type"] = state_update["output_type"]
         
         session["status"] = "completed"
         session["progress"] = 100
@@ -293,7 +305,10 @@ async def get_status(session_id: str) -> StatusResponse:
         certification=session.get("certification"),
         overall_score=session.get("overall_score"),
         logs=session["logs"][-50:],
-        errors=session["errors"]
+        errors=session["errors"],
+        verification_status=session.get("verification_status"),
+        formula_coverage=session.get("formula_coverage"),
+        output_type=session.get("output_type")
     )
 
 

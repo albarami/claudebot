@@ -321,6 +321,11 @@ Provide detailed assessment with specific scores for each dimension."""
     
     overall_score = calculate_overall_score(quality_scores)
     certification = determine_certification(overall_score)
+
+    # Increment audit revision count if below publication-ready threshold
+    audit_revision_count = state.get('audit_revision_count', 0)
+    if overall_score < PUBLICATION_READY_THRESHOLD:
+        audit_revision_count += 1
     
     audit_report = f"""
 {'='*60}
@@ -366,6 +371,7 @@ LLM NARRATIVE ASSESSMENT:
         "quality_scores": quality_scores,
         "overall_score": overall_score,
         "certification": certification,
+        "audit_revision_count": audit_revision_count,
         "status": "auditing",
         "execution_log": [log_entry],
         "messages": [{"role": "auditor", "content": f"Final Audit: {overall_score:.1f}% - {certification}"}]

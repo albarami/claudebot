@@ -55,22 +55,15 @@ def route_after_audit(state: SurveyAnalysisState) -> Literal["deliverables", "re
     audit_revision_count = state.get('audit_revision_count', 0)
     MAX_AUDIT_REVISIONS = 2
     
-    # High quality - proceed to deliverables
-    if certification in ["PUBLICATION-READY", "THESIS-READY"] or overall_score >= 90:
+    # Only publish when publication-ready threshold is met
+    if certification == "PUBLICATION-READY" or overall_score >= 97:
         return "deliverables"
-    
-    # Acceptable quality - proceed with warnings
-    if certification == "ACCEPTABLE" or overall_score >= 75:
-        return "deliverables"
-    
-    # Low quality - trigger revision if under max
+
+    # Otherwise, trigger revision loop until max revisions reached
     if audit_revision_count < MAX_AUDIT_REVISIONS:
         return "revision_loop"
-    
-    # Max revisions reached - halt or proceed with current quality
-    if overall_score >= 60:
-        return "deliverables"
-    
+
+    # Fail closed if quality cannot meet threshold
     return "halt"
 
 

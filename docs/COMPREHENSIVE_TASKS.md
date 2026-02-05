@@ -1,4 +1,4 @@
-# Comprehensive Implementation Tasks - Excel-First + UDF Macros
+ï»¿# Comprehensive Implementation Tasks - Excel-First + UDF Macros
 
 Date: 2026-02-05
 Scope: Fully automated, PhD-level survey analysis with Excel formulas + macro UDFs
@@ -53,11 +53,11 @@ Output: Macro-enabled Excel (.xlsm) with full audit trail
 - Require explicit coverage of each required sheet and statistical family.
 - Acceptance: missing sheet or test family fails plan review.
 
-## Phase 2: Excel Macro Template + UDFs
-### Task 2.1: Create macro template
-- File: `templates/analysis_template.xlsm`
-- Contains VBA project with UDFs.
-- Acceptance: UDFs callable in Excel formulas.
+## Phase 2: Dynamic Macro Workbook + UDFs (No Template)
+### Task 2.1: Dynamic macro workbook creation
+- File: `backend/tools/excel_template.py`
+- Create .xlsm dynamically and inject VBA module at runtime.
+- Acceptance: UDFs callable in Excel formulas without a fixed template.
 
 ### Task 2.2: Add VBA module source to repo
 - File: `backend/tools/udf/analysis_udf.bas`
@@ -68,11 +68,11 @@ Output: Macro-enabled Excel (.xlsm) with full audit trail
 - `FISHER_Z(r)`
 - `P_VALUE_T(t, df)`
 - `P_VALUE_F(f, df1, df2)`
-- Acceptance: VBA module matches template UDFs.
+- Acceptance: VBA module matches documented UDFs.
 
-### Task 2.3: Template loader utility
+### Task 2.3: Macro loader utility
 - File: `backend/tools/excel_template.py`
-- Load `.xlsm` with `keep_vba=True` and write sheets without losing macros.
+- Create or load `.xlsm` with `keep_vba=True` and write sheets without losing macros.
 - Acceptance: output workbook preserves macros and UDFs.
 
 ### Task 2.4: Macro trust and execution checks
@@ -137,7 +137,7 @@ Output: Macro-enabled Excel (.xlsm) with full audit trail
 
 ### Task 5.3: Reliability and correlations
 - Sheets: `08_RELIABILITY`, `09_CORRELATIONS`.
-- Cronbach’s alpha via UDF where needed.
+- Cronbach's alpha via UDF where needed.
 - Acceptance: alpha and r values verified.
 
 ### Task 5.4: Group comparisons and effect sizes
@@ -235,7 +235,7 @@ Output: Macro-enabled Excel (.xlsm) with full audit trail
 ## Git Commit Plan
 Commit after each phase to keep history clean:
 1. `git commit -m "Add plan schema and plan review gate"`
-2. `git commit -m "Add Excel macro template and UDFs"`
+2. `git commit -m "Add dynamic macro workbook and UDFs"`
 3. `git commit -m "Add deterministic formula engine"`
 4. `git commit -m "Add verification gate and QC integration"`
 5. `git commit -m "Complete quantitative pipeline"`
@@ -256,3 +256,4 @@ Commit after each phase to keep history clean:
 - All outputs formula-driven or UDF-driven.
 - End-to-end run completes with PASS verification and certification.
 - Audit and QC logs generated for every run.
+

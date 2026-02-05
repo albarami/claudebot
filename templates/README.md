@@ -1,47 +1,45 @@
-# PhD Survey Analyzer - Output Format
+﻿# Excel Macro Integration (No Template Required)
 
-## How It Works
+## Overview
 
-Each survey analysis generates a **fresh Excel workbook** (`.xlsx`) tailored to that specific survey's data and structure. There is no static template - every workbook is dynamically created.
+The PhD Survey Analyzer generates macro-enabled Excel files (`.xlsm`) dynamically at runtime.
+No fixed analysis template is used, because every survey produces different sheets.
 
-## Output Structure
-
-Each generated workbook contains:
+Macros (UDFs) are injected automatically from the VBA source in:
 
 ```
-PhD_EDA_{session_id}.xlsx
-├── 00_METADATA          ← Session info, generation timestamp
-├── 00_RAW_DATA_LOCKED   ← Original survey data (read-only reference)
-├── 01_DATA_AUDIT        ← Data quality checks
-├── 02_DESCRIPTIVES      ← Summary statistics (all formulas)
-├── 03_CORRELATIONS      ← Correlation matrix
-├── ...                  ← Additional analysis sheets
+backend/tools/udf/analysis_udf.bas
 ```
 
-## Computation Method
+## Requirements
+- Microsoft Excel installed on the host machine
+- Trust access to the VBA project object model enabled in Excel
+- `pywin32` installed in the Python environment
 
-**Excel Formulas + Python Verification**
+## UDF Functions Available
 
-1. All numeric outputs use Excel formulas (e.g., `=AVERAGE()`, `=STDEV.S()`, `=CORREL()`)
-2. Formulas reference the raw data sheet directly
-3. Python computes ground-truth values for verification
-4. Any mismatch triggers rejection and revision
+| Function | Purpose |
+|----------|---------|
+| `SHAPIRO_WILK(range)` | Normality test W statistic + p-value |
+| `LEVENE_TEST(r1, r2)` | Homogeneity of variance F + p-value |
+| `CRONBACH_ALPHA(range)` | Internal consistency alpha |
+| `FISHER_Z(r)` | Fisher Z transformation |
+| `P_VALUE_T(t, df)` | Two-tailed p for t-test |
+| `P_VALUE_F(f, df1, df2)` | p-value for F statistic |
+| `COHENS_D(mean1, sd1, n1, mean2, sd2, n2)` | Effect size d |
+| `ETA_SQUARED(SSbetween, SStotal)` | ANOVA effect size eta^2 |
+| `CRAMERS_V(chi2, n, k)` | Chi-square effect size |
+| `CI_MEAN(mean, sd, n, conf)` | Confidence interval for mean |
 
-## Why No Macro Template?
+## Troubleshooting
 
-- Each survey has different columns, scales, and analysis needs
-- A static template cannot accommodate dynamic survey structures
-- Python provides reliable ground-truth for advanced statistics
-- Standard `.xlsx` files work everywhere (no macro security issues)
+| Issue | Resolution |
+|------|------------|
+| `pywin32` missing | Install `pywin32` and retry |
+| VBA access denied | Enable "Trust access to VBA project object model" in Excel |
+| UDF shows `#NAME?` | Macros are disabled or VBA import failed |
 
-## Advanced Statistics
+## Notes
+- If macro creation fails, the system fails closed by design.
+- This preserves academic integrity by preventing partial or unverified output.
 
-For tests not native to Excel (Shapiro-Wilk, Cronbach's α, etc.):
-
-- **Python computes the value** in `verification.py`
-- Excel shows the result as a labeled value
-- Verification report confirms accuracy
-
-## VBA Reference (Optional)
-
-The file `backend/tools/udf/analysis_udf.bas` contains VBA implementations of advanced statistics. These are provided as reference but are **not required** for the system to work. Python handles all verification.

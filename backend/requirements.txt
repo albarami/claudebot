@@ -27,3 +27,4 @@ aiofiles>=24.1.0
 
 # Utilities
 typing-extensions>=4.0.0
+pywin32>=306

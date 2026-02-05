@@ -8,11 +8,9 @@ from typing import Dict, Any
 from datetime import datetime
 
 import pandas as pd
-from openpyxl.utils import get_column_letter
-
 from graph.state import SurveyAnalysisState, LogEntry
 from tools.stats_tools import SurveyDataAnalyzer
-from tools.excel_tools import ExcelFormulaWorkbook, get_column_mapping
+from tools.reporting import APATableWriter, generate_apa_interpretation
 from config import OUTPUT_DIR
 
 
@@ -42,7 +40,7 @@ async def load_data_node(state: SurveyAnalysisState) -> Dict[str, Any]:
         timestamp=datetime.now().isoformat(),
         agent="system",
         action="Loaded survey data",
-        details=f"Loaded {len(df)} rows × {len(df.columns)} columns",
+        details=f"Loaded {len(df)} rows x {len(df.columns)} columns",
         task_id=None
     )
     
@@ -58,7 +56,7 @@ async def load_data_node(state: SurveyAnalysisState) -> Dict[str, Any]:
         "data_summary": data_summary,
         "status": "data_loaded",
         "execution_log": [log_entry],
-        "messages": [{"role": "system", "content": f"Loaded survey: {len(df)} rows × {len(df.columns)} columns"}]
+        "messages": [{"role": "system", "content": f"Loaded survey: {len(df)} rows x {len(df.columns)} columns"}]
     }
 
 
@@ -140,9 +138,9 @@ async def generate_deliverables_node(state: SurveyAnalysisState) -> Dict[str, An
     
     audit_path = OUTPUT_DIR / f"AUDIT_CERTIFICATE_{session_id}.md"
     with open(audit_path, "w", encoding="utf-8") as f:
-        f.write("═" * 60 + "\n")
+        f.write("=" * 60 + "\n")
         f.write("# ACADEMIC AUDIT CERTIFICATE\n")
-        f.write("═" * 60 + "\n\n")
+        f.write("=" * 60 + "\n\n")
         f.write(f"**Survey:** {file_name}\n")
         f.write(f"**Session:** {session_id}\n")
         f.write(f"**Date:** {timestamp}\n")
@@ -152,7 +150,7 @@ async def generate_deliverables_node(state: SurveyAnalysisState) -> Dict[str, An
         if quality_scores:
             for k, v in quality_scores.items():
                 score = float(v) if v is not None else 0.0
-                status = "✓" if score >= 95 else "⚠" if score >= 90 else "❌"
+                status = "PASS" if score >= 95 else "WARN" if score >= 90 else "FAIL"
                 f.write(f"- **{k.replace('_', ' ').title()}:** {score:.1f}% {status}\n")
         else:
             f.write("- Quality scores not yet available\n")

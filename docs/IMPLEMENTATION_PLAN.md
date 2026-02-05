@@ -1,4 +1,4 @@
-# Implementation Plan - Fully Automated PhD-Level Survey Analyzer (Excel-First + UDF Macros)
+﻿# Implementation Plan - Fully Automated PhD-Level Survey Analyzer (Excel-First + UDF Macros)
 
 Date: 2026-02-05
 Owner: Codex + User
@@ -30,7 +30,7 @@ Status: Draft v1
 ## High-Level Architecture Changes
 1. Deterministic computation engine for all statistics.
 2. Excel formula generator for every output sheet.
-3. Macro-enabled template workbook that includes UDFs for non-native tests.
+3. Dynamic macro-enabled workbook creation (no fixed template) with UDF injection.
 4. Plan review gate before any execution.
 5. Deterministic verification gate after each task and at final audit.
 
@@ -61,9 +61,9 @@ Acceptance Criteria:
 - Plan output validates against schema.
 - Plan review blocks if any required task category is missing.
 
-### Phase 2: Excel Macro Template and UDFs
-1. Create a macro-enabled template workbook `templates/analysis_template.xlsm`.
-2. Add VBA module with UDFs for non-native tests.
+### Phase 2: Excel Macro Creation and UDFs (No Template)
+1. Create macro-enabled workbooks dynamically via Excel COM (no fixed template).
+2. Inject VBA module with UDFs for non-native tests at runtime.
 3. Ensure openpyxl writes using `keep_vba=True` to preserve macros.
 
 Required UDFs (initial set):
@@ -75,12 +75,12 @@ Required UDFs (initial set):
 - `P_VALUE_F(f, df1, df2)`
 
 Deliverables:
-- `templates/analysis_template.xlsm`
-- `backend/tools/excel_udf_writer.py` (loader utilities)
+- `backend/tools/excel_template.py` (dynamic macro workbook creation)
+- `backend/tools/udf/analysis_udf.bas` (UDF source)
 
 Acceptance Criteria:
-- Workbook saves as .xlsm with UDFs intact.
-- UDFs callable inside Excel formulas.
+- Workbook saves as .xlsm with UDFs intact (no template required).
+- UDFs callable inside Excel formulas after dynamic injection.
 
 ### Phase 3: Deterministic Formula Engine
 1. Implement formula generators by task type.
@@ -169,7 +169,7 @@ Acceptance Criteria:
 - Task schema drift if strategist prompt changes.
 
 Mitigations:
-- Provide signed macro template when possible.
+- Provide signed VBA module and documented Excel trust settings.
 - Include a pure-Python validation report as backup evidence.
 - Version-lock strategist output format.
 
@@ -181,7 +181,7 @@ Mitigations:
 
 ## Execution Order
 1. Implement schema and plan review gate.
-2. Create macro-enabled template and UDFs.
+2. Create dynamic macro workbooks and UDF injection.
 3. Build formula engine.
 4. Build deterministic verification.
 5. Expand quant tasks.
@@ -193,3 +193,4 @@ Mitigations:
 - This plan assumes all inputs are Excel files.
 - Output will be macro-enabled Excel (.xlsm) to preserve UDFs.
 - The system will halt on any validation failure and iterate until resolved.
+

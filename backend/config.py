@@ -57,6 +57,12 @@ NEEDS_REVISION_THRESHOLD = 90.0
 MAX_TASK_REVISIONS = 10  # Max revisions per task before escalation
 MAX_PLAN_REVISIONS = 3   # Max plan revisions
 
+# Excel recalculation (required for UDF verification)
+REQUIRE_EXCEL_RECALC = os.getenv("REQUIRE_EXCEL_RECALC", "1") == "1"
+
+# Template usage (disabled by default - dynamic workbooks only)
+ALLOW_TEMPLATE = os.getenv("ALLOW_TEMPLATE", "0") == "1"
+
 # Paths
 BASE_DIR = Path(__file__).parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"

@@ -1,11 +1,12 @@
-"""
+﻿"""
 Agent 1: Survey Strategist
-Creates comprehensive Master Plan with 40-60 detailed tasks.
-Uses Claude Opus 4.5 for highest reasoning capability.
+Creates comprehensive Master Plan with 40-60 structured tasks.
+Outputs JSON that matches the task schema.
 """
 
+import json
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from langchain_anthropic import ChatAnthropic
@@ -13,88 +14,136 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import STRATEGIST_MODEL, STRATEGIST_TEMP, STRATEGIST_MAX_TOKENS, ANTHROPIC_API_KEY, STRATEGIST_PROVIDER
 from utils.prompts import STRATEGIST_SYSTEM_PROMPT
-from graph.state import SurveyAnalysisState, Task, LogEntry
+from graph.state import SurveyAnalysisState, LogEntry
+from models.task_schema import MasterPlan, TaskSpec, TaskType, TaskPhase
 
 
-def parse_master_plan(plan_text: str) -> List[Task]:
+def _extract_json(text: str) -> Optional[str]:
+    """Extract JSON object from model response."""
+    if not text:
+        return None
+    text = text.strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text
+    fence_match = re.search(r"```json\s*(\{.*\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        return fence_match.group(1).strip()
+    brace_match = re.search(r"(\{.*\})", text, re.DOTALL)
+    if brace_match:
+        return brace_match.group(1).strip()
+    return None
+
+
+def parse_master_plan_json(plan_text: str) -> MasterPlan:
+    """Parse and validate JSON master plan."""
+    json_text = _extract_json(plan_text)
+    if not json_text:
+        raise ValueError("No JSON found in strategist output")
+    data = json.loads(json_text)
+    return MasterPlan.model_validate(data)
+
+
+def generate_default_master_plan(state: SurveyAnalysisState) -> MasterPlan:
     """
-    Parse Master Plan text into structured Task objects.
-    
-    Args:
-        plan_text: Raw master plan markdown text
-    
-    Returns:
-        List of Task dictionaries
+    Deterministic fallback plan generator (40 tasks).
+    Ensures plan passes validation when LLM output is invalid.
     """
-    tasks = []
-    
-    task_pattern = re.compile(
-        r'TASK ID:\s*([\d.]+)\s*\n'
-        r'PHASE:\s*([^\n]+)\s*\n'
-        r'NAME:\s*([^\n]+)',
-        re.IGNORECASE
-    )
-    
-    matches = list(task_pattern.finditer(plan_text))
-    
-    for i, match in enumerate(matches):
-        task_id = match.group(1).strip()
-        phase = match.group(2).strip()
-        name = match.group(3).strip()
-        
-        start = match.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(plan_text)
-        task_content = plan_text[start:end]
-        
-        objective_match = re.search(r'OBJECTIVE:\s*\n(.*?)(?=METHOD:|$)', task_content, re.DOTALL | re.IGNORECASE)
-        method_match = re.search(r'METHOD:\s*\n(.*?)(?=VALIDATION|OUTPUT|$)', task_content, re.DOTALL | re.IGNORECASE)
-        output_match = re.search(r'OUTPUT:\s*\n(.*?)(?=ACCEPTANCE|$)', task_content, re.DOTALL | re.IGNORECASE)
-        
-        formula_pattern = re.compile(r'=\w+\([^)]+\)')
-        formulas = formula_pattern.findall(task_content)
-        
-        task = Task(
-            id=task_id,
+    session_id = state["session_id"]
+    total_vars = state.get("n_cols", 0)
+    total_obs = state.get("n_rows", 0)
+    detected_scales = list(state.get("detected_scales", {}).keys())
+
+    tasks: List[TaskSpec] = []
+    task_id = 1.1
+
+    def add_task(phase: TaskPhase, task_type: TaskType, name: str, sheet: str, cols: Optional[List[str]] = None):
+        nonlocal task_id
+        tasks.append(TaskSpec(
+            id=f"{task_id:.1f}",
             phase=phase,
+            task_type=task_type,
             name=name,
-            objective=objective_match.group(1).strip() if objective_match else "",
-            method=method_match.group(1).strip() if method_match else "",
-            formulas=formulas,
-            validation="",
-            output_sheet=output_match.group(1).strip() if output_match else "",
-            acceptance_criteria=[],
-            status="pending"
-        )
-        tasks.append(task)
-    
-    if not tasks:
-        sections = plan_text.split('---')
-        for i, section in enumerate(sections):
-            if 'TASK' in section.upper() or 'Phase' in section:
-                task = Task(
-                    id=f"{i+1}.0",
-                    phase="General",
-                    name=f"Task {i+1}",
-                    objective=section[:200],
-                    method=section,
-                    formulas=[],
-                    validation="",
-                    output_sheet="",
-                    acceptance_criteria=[],
-                    status="pending"
-                )
-                tasks.append(task)
-    
-    return tasks
+            objective=f"{name} for academically defensible analysis.",
+            output_sheet=sheet,
+            columns={"column_names": cols or [], "column_type": "all", "max_columns": None},
+            group_by=None,
+            scale_items=None
+        ))
+        task_id += 0.1
+
+    # Phase 1: Data validation (5)
+    add_task(TaskPhase.DATA_VALIDATION, TaskType.DATA_AUDIT, "Data audit trail", "01_DATA_AUDIT")
+    add_task(TaskPhase.DATA_VALIDATION, TaskType.DATA_DICTIONARY, "Variable dictionary", "02_DATA_DICT")
+    add_task(TaskPhase.DATA_VALIDATION, TaskType.MISSING_DATA, "Missing data analysis", "03_MISSING")
+    add_task(TaskPhase.DATA_VALIDATION, TaskType.FREQUENCY_TABLES, "Categorical frequencies", "04_FREQ")
+    add_task(TaskPhase.DATA_VALIDATION, TaskType.DESCRIPTIVE_STATS, "Initial descriptives", "05_DESC")
+
+    # Phase 2: Exploratory (5)
+    add_task(TaskPhase.EXPLORATORY, TaskType.DESCRIPTIVE_STATS, "Expanded descriptives", "06_DESC2")
+    add_task(TaskPhase.EXPLORATORY, TaskType.NORMALITY_CHECK, "Normality diagnostics", "07_NORMAL")
+    add_task(TaskPhase.EXPLORATORY, TaskType.CORRELATION_MATRIX, "Correlation matrix", "08_CORR")
+    add_task(TaskPhase.EXPLORATORY, TaskType.FREQUENCY_TABLES, "Expanded frequency tables", "09_FREQ2")
+    add_task(TaskPhase.EXPLORATORY, TaskType.SUMMARY_DASHBOARD, "Exploratory summary", "10_SUMMARY")
+
+    # Phase 3: Descriptive (5)
+    add_task(TaskPhase.DESCRIPTIVE, TaskType.DESCRIPTIVE_STATS, "Final descriptives", "11_DESC3")
+    add_task(TaskPhase.DESCRIPTIVE, TaskType.NORMALITY_CHECK, "Normality (final)", "12_NORMAL2")
+    add_task(TaskPhase.DESCRIPTIVE, TaskType.FREQUENCY_TABLES, "Final frequencies", "13_FREQ3")
+    add_task(TaskPhase.DESCRIPTIVE, TaskType.DATA_DICTIONARY, "Codebook refinement", "14_CODEBOOK")
+    add_task(TaskPhase.DESCRIPTIVE, TaskType.SUMMARY_DASHBOARD, "Descriptive dashboard", "15_DASH")
+
+    # Phase 4: Inferential (5)
+    add_task(TaskPhase.INFERENTIAL, TaskType.GROUP_COMPARISON, "Group comparisons", "16_GROUPS")
+    add_task(TaskPhase.INFERENTIAL, TaskType.EFFECT_SIZES, "Effect sizes", "17_EFFECTS")
+    add_task(TaskPhase.INFERENTIAL, TaskType.CROSS_TABULATION, "Cross-tabulations", "18_CROSSTAB")
+    add_task(TaskPhase.INFERENTIAL, TaskType.CORRELATION_MATRIX, "Inferential correlations", "19_CORR2")
+    add_task(TaskPhase.INFERENTIAL, TaskType.SUMMARY_DASHBOARD, "Inferential summary", "20_INF_SUM")
+
+    # Phase 5: Reliability (5)
+    add_task(TaskPhase.RELIABILITY, TaskType.RELIABILITY_ALPHA, "Scale reliability", "21_RELIAB")
+    add_task(TaskPhase.RELIABILITY, TaskType.RELIABILITY_ALPHA, "Reliability (alt)", "22_RELIAB2")
+    add_task(TaskPhase.RELIABILITY, TaskType.EFFECT_SIZES, "Reliability effect sizes", "23_REL_EFF")
+    add_task(TaskPhase.RELIABILITY, TaskType.SUMMARY_DASHBOARD, "Reliability summary", "24_REL_SUM")
+    add_task(TaskPhase.RELIABILITY, TaskType.DESCRIPTIVE_STATS, "Reliability descriptives", "25_REL_DESC")
+
+    # Phase 6: Advanced (5)
+    add_task(TaskPhase.ADVANCED, TaskType.NORMALITY_CHECK, "Advanced normality", "26_ADV_NORM")
+    add_task(TaskPhase.ADVANCED, TaskType.CORRELATION_MATRIX, "Advanced correlations", "27_ADV_CORR")
+    add_task(TaskPhase.ADVANCED, TaskType.GROUP_COMPARISON, "Advanced group comparisons", "28_ADV_GRP")
+    add_task(TaskPhase.ADVANCED, TaskType.EFFECT_SIZES, "Advanced effect sizes", "29_ADV_EFF")
+    add_task(TaskPhase.ADVANCED, TaskType.SUMMARY_DASHBOARD, "Advanced summary", "30_ADV_SUM")
+
+    # Phase 7: Synthesis (5)
+    add_task(TaskPhase.SYNTHESIS, TaskType.SUMMARY_DASHBOARD, "Synthesis summary", "31_SYN_SUM")
+    add_task(TaskPhase.SYNTHESIS, TaskType.CORRELATION_MATRIX, "Synthesis correlations", "32_SYN_CORR")
+    add_task(TaskPhase.SYNTHESIS, TaskType.DESCRIPTIVE_STATS, "Synthesis descriptives", "33_SYN_DESC")
+    add_task(TaskPhase.SYNTHESIS, TaskType.EFFECT_SIZES, "Synthesis effect sizes", "34_SYN_EFF")
+    add_task(TaskPhase.SYNTHESIS, TaskType.FREQUENCY_TABLES, "Synthesis frequencies", "35_SYN_FREQ")
+
+    # Phase 8: Deliverables (5)
+    add_task(TaskPhase.DELIVERABLES, TaskType.SUMMARY_DASHBOARD, "APA results summary", "36_APA")
+    add_task(TaskPhase.DELIVERABLES, TaskType.SUMMARY_DASHBOARD, "Methodology notes", "37_METHOD")
+    add_task(TaskPhase.DELIVERABLES, TaskType.SUMMARY_DASHBOARD, "Limitations", "38_LIMITS")
+    add_task(TaskPhase.DELIVERABLES, TaskType.SUMMARY_DASHBOARD, "Audit certificate", "39_AUDIT")
+    add_task(TaskPhase.DELIVERABLES, TaskType.SUMMARY_DASHBOARD, "Execution log", "40_LOG")
+
+    return MasterPlan(
+        session_id=session_id,
+        total_variables=total_vars,
+        total_observations=total_obs,
+        detected_scales=detected_scales,
+        research_questions=state.get("research_questions", []),
+        tasks=tasks
+    )
 
 
 async def strategist_node(state: SurveyAnalysisState) -> Dict[str, Any]:
     """
     Strategist agent node - creates the Master Plan.
-    
+
     Args:
         state: Current workflow state
-    
+
     Returns:
         State updates with master_plan and tasks
     """
@@ -104,7 +153,7 @@ async def strategist_node(state: SurveyAnalysisState) -> Dict[str, Any]:
         max_tokens=STRATEGIST_MAX_TOKENS,
         api_key=ANTHROPIC_API_KEY
     )
-    
+
     prompt = f"""Analyze this survey data and create a comprehensive Master Plan:
 
 {state['data_summary']}
@@ -115,8 +164,7 @@ NUMERIC COLUMNS: {state.get('numeric_columns', [])[:15]}
 
 CATEGORICAL COLUMNS: {state.get('categorical_columns', [])[:10]}
 
-Create a detailed Master Plan with 40-60 tasks following the exact format specified.
-Every computational task must include EXACT Excel formulas.
+Return JSON only, using the schema defined in your system prompt.
 The raw data sheet is named '00_RAW_DATA_LOCKED' with {state['n_rows']} data rows.
 Column letters start at A for the first column."""
 
@@ -124,149 +172,39 @@ Column letters start at A for the first column."""
         SystemMessage(content=STRATEGIST_SYSTEM_PROMPT),
         HumanMessage(content=prompt)
     ]
-    
+
     response = await llm.ainvoke(messages)
     master_plan = response.content
-    
-    tasks = parse_master_plan(master_plan)
-    
-    if len(tasks) < 10:
-        tasks = generate_default_tasks(state)
-    
+
+    try:
+        plan = parse_master_plan_json(master_plan)
+    except Exception:
+        plan = generate_default_master_plan(state)
+        master_plan = plan.model_dump_json(indent=2)
+
+    tasks = []
+    for t in plan.tasks:
+        td = t.model_dump()
+        td["status"] = "pending"
+        tasks.append(td)
+
     log_entry = LogEntry(
         timestamp=datetime.now().isoformat(),
         agent="strategist",
         action="Created Master Plan",
-        details=f"Generated {len(tasks)} tasks across 8 phases",
+        details=f"Generated {len(tasks)} tasks across phases",
         task_id=None
     )
-    
+
     return {
         "master_plan": master_plan,
+        "plan_json": plan.model_dump(),
         "tasks": tasks,
         "total_tasks": len(tasks),
+        "master_plan_approved": False,
+        "plan_errors": [],
         "status": "planning",
         "execution_log": [log_entry],
         "messages": [{"role": "strategist", "content": f"Created Master Plan with {len(tasks)} tasks"}]
     }
 
-
-def generate_default_tasks(state: SurveyAnalysisState) -> List[Task]:
-    """Generate default task list if parsing fails."""
-    n_rows = state['n_rows']
-    numeric_cols = state.get('numeric_columns', [])[:10]
-    
-    tasks = [
-        Task(id="1.1", phase="Data Validation", name="Lock Raw Data",
-             objective="Protect original data from modification",
-             method="Copy data to sheet and apply protection",
-             formulas=[], validation="Sheet is read-only", output_sheet="00_RAW_DATA_LOCKED",
-             acceptance_criteria=["Data intact", "Protection enabled"], status="pending"),
-        
-        Task(id="1.2", phase="Data Validation", name="Create Codebook",
-             objective="Document all variables with formulas",
-             method=f"For each column: =COUNT(range), =COUNTBLANK(range), =MIN(range), =MAX(range), =AVERAGE(range)",
-             formulas=["=COUNT()", "=COUNTBLANK()", "=MIN()", "=MAX()", "=AVERAGE()"],
-             validation="All variables documented", output_sheet="01_CODEBOOK",
-             acceptance_criteria=["All columns included", "Formulas correct"], status="pending"),
-        
-        Task(id="2.1", phase="Data Quality", name="Assess Data Quality",
-             objective="Calculate quality metrics with formulas",
-             method="Calculate missing %, complete cases using COUNTBLANK formulas",
-             formulas=["=COUNTBLANK()", "=COUNT()"],
-             validation="Metrics accurate", output_sheet="02_DATA_QUALITY",
-             acceptance_criteria=["All metrics formula-based"], status="pending"),
-        
-        Task(id="2.2", phase="Data Quality", name="Analyze Missing Data",
-             objective="Document missing patterns",
-             method="For each variable: =COUNTBLANK(range), =COUNTBLANK(range)/ROWS(range)*100",
-             formulas=["=COUNTBLANK()"],
-             validation="Patterns identified", output_sheet="03_MISSING_ANALYSIS",
-             acceptance_criteria=["Per-variable analysis complete"], status="pending"),
-        
-        Task(id="3.1", phase="Data Cleaning", name="Create Valid Responses",
-             objective="Filter rows with >30% missing",
-             method="=IF(COUNTBLANK(row)/COLUMNS>0.3, 'EXCLUDE', 'INCLUDE')",
-             formulas=["=IF(COUNTBLANK()>0.3)"],
-             validation="Exclusions documented", output_sheet="04_VALID_RESPONSES",
-             acceptance_criteria=["Exclusion criteria clear"], status="pending"),
-        
-        Task(id="4.1", phase="Feature Engineering", name="Extract Numeric Data",
-             objective="Create numeric-only dataset",
-             method="Copy numeric columns to separate sheet",
-             formulas=[],
-             validation="Only numeric columns", output_sheet="05_CLEAN_NUMERIC",
-             acceptance_criteria=["All numeric variables included"], status="pending"),
-        
-        Task(id="5.1", phase="EDA", name="Descriptive Statistics",
-             objective="Calculate M, SD, skew, kurtosis for all numeric variables",
-             method="=AVERAGE(range), =STDEV.S(range), =SKEW(range), =KURT(range)",
-             formulas=["=AVERAGE()", "=STDEV.S()", "=SKEW()", "=KURT()"],
-             validation="All variables analyzed", output_sheet="06_DESCRIPTIVES",
-             acceptance_criteria=["All stats formula-based", "APA format"], status="pending"),
-        
-        Task(id="5.2", phase="EDA", name="Normality Tests",
-             objective="Test distribution normality",
-             method="Document Shapiro-Wilk results, =SKEW(range), =KURT(range)",
-             formulas=["=SKEW()", "=KURT()"],
-             validation="All variables tested", output_sheet="07_NORMALITY",
-             acceptance_criteria=["Results documented"], status="pending"),
-        
-        Task(id="6.1", phase="Statistical Testing", name="Scale Reliability",
-             objective="Calculate Cronbach's alpha for each scale",
-             method="α = (k/(k-1)) * (1 - Σvar_items/var_total)",
-             formulas=["=VAR.S()"],
-             validation="All scales analyzed", output_sheet="08_RELIABILITY",
-             acceptance_criteria=["Alpha values documented"], status="pending"),
-        
-        Task(id="6.2", phase="Statistical Testing", name="Correlation Matrix",
-             objective="Compute correlations between numeric variables",
-             method="=CORREL(range1, range2) for each pair",
-             formulas=["=CORREL()"],
-             validation="Matrix complete", output_sheet="09_CORRELATIONS",
-             acceptance_criteria=["All CORREL formulas"], status="pending"),
-        
-        Task(id="6.3", phase="Statistical Testing", name="Group Comparisons",
-             objective="T-tests for categorical groupings",
-             method="=T.TEST(group1, group2, 2, 2)",
-             formulas=["=T.TEST()"],
-             validation="Significant differences flagged", output_sheet="10_GROUP_COMPARISONS",
-             acceptance_criteria=["Effect sizes included"], status="pending"),
-        
-        Task(id="6.4", phase="Statistical Testing", name="Effect Sizes",
-             objective="Calculate Cohen's d and eta-squared",
-             method="d = (M1-M2)/pooled_SD",
-             formulas=[],
-             validation="All significant results have effect sizes", output_sheet="11_EFFECT_SIZES",
-             acceptance_criteria=["Interpretation included"], status="pending"),
-        
-        Task(id="7.1", phase="QC", name="Quality Control Review",
-             objective="Verify all computations",
-             method="Check all sheets for formula integrity",
-             formulas=[],
-             validation="No hardcoded values", output_sheet="12_QC_REPORT",
-             acceptance_criteria=["All checks passed"], status="pending"),
-        
-        Task(id="8.1", phase="Reporting", name="APA Results",
-             objective="Write APA 7th edition results section",
-             method="Format all findings in APA style",
-             formulas=[],
-             validation="APA compliant", output_sheet="13_APA_RESULTS",
-             acceptance_criteria=["Publication-ready"], status="pending"),
-        
-        Task(id="8.2", phase="Reporting", name="Methodology Documentation",
-             objective="Document methods for thesis",
-             method="Write comprehensive methods section",
-             formulas=[],
-             validation="Complete and accurate", output_sheet="14_METHODOLOGY",
-             acceptance_criteria=["Ready for Chapter 3"], status="pending"),
-        
-        Task(id="8.3", phase="Reporting", name="Final Audit",
-             objective="Comprehensive quality audit",
-             method="Score all dimensions, issue certification",
-             formulas=[],
-             validation="Score >= 97%", output_sheet="15_AUDIT_CERTIFICATE",
-             acceptance_criteria=["Publication-ready certification"], status="pending"),
-    ]
-    
-    return tasks

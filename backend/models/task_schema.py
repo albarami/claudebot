@@ -10,6 +10,7 @@ from enum import Enum
 
 class TaskType(str, Enum):
     """Supported analysis task types with deterministic formula templates."""
+    # Quantitative tasks
     DATA_AUDIT = "data_audit"
     DATA_DICTIONARY = "data_dictionary"
     MISSING_DATA = "missing_data"
@@ -22,6 +23,14 @@ class TaskType(str, Enum):
     CROSS_TABULATION = "cross_tabulation"
     EFFECT_SIZES = "effect_sizes"
     SUMMARY_DASHBOARD = "summary_dashboard"
+    # Qualitative tasks
+    CODEBOOK_CREATION = "codebook_creation"
+    QUALITATIVE_CODING = "qualitative_coding"
+    THEME_ANALYSIS = "theme_analysis"
+    CODING_RELIABILITY = "coding_reliability"
+    # Reporting tasks
+    APA_TABLES = "apa_tables"
+    NARRATIVE_RESULTS = "narrative_results"
 
 
 class TaskPhase(str, Enum):
@@ -79,7 +88,7 @@ class MasterPlan(BaseModel):
     total_observations: int
     detected_scales: List[str] = Field(default_factory=list)
     research_questions: List[str] = Field(default_factory=list)
-    tasks: List[TaskSpec] = Field(..., min_length=5, max_length=60)
+    tasks: List[TaskSpec] = Field(..., min_length=40, max_length=60)
     
     @field_validator('tasks')
     @classmethod
@@ -131,6 +140,23 @@ def validate_plan(plan: MasterPlan, available_columns: List[str]) -> PlanValidat
     missing_phases = required_phases - present_phases
     if missing_phases:
         errors.append(f"Missing required phases: {[p.value for p in missing_phases]}")
+
+    # Check required task types are present
+    required_types = {
+        TaskType.DATA_AUDIT,
+        TaskType.DATA_DICTIONARY,
+        TaskType.MISSING_DATA,
+        TaskType.DESCRIPTIVE_STATS,
+        TaskType.NORMALITY_CHECK,
+        TaskType.RELIABILITY_ALPHA,
+        TaskType.CORRELATION_MATRIX,
+        TaskType.GROUP_COMPARISON,
+        TaskType.EFFECT_SIZES
+    }
+    present_types = {t.task_type for t in plan.tasks}
+    missing_types = required_types - present_types
+    if missing_types:
+        errors.append(f"Missing required task types: {[t.value for t in missing_types]}")
     
     # Check for duplicate task IDs
     task_ids = [t.id for t in plan.tasks]
